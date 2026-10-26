@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="et">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Säästud ja eesmärgid</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+
+<section id="login-view" class="login">
+  <form id="login-form" class="login-card" autocomplete="on">
+    <div class="logo">Säästud</div>
+    <h1>Logi sisse</h1>
+    <label>Kasutaja või e-post<input id="login-user" required autocomplete="username"></label>
+    <label>Parool<input id="login-pass" type="password" required autocomplete="current-password"></label>
+    <p id="login-error" class="error" role="alert" hidden></p>
+    <button class="btn primary" type="submit">Logi sisse</button>
+    <p id="mode-note" class="muted small"></p>
+  </form>
+</section>
+
+<div id="app-view" hidden>
+  <header class="topbar">
+    <div class="logo">Säästud</div>
+    <div class="user"><span id="user-name"></span><button id="logout" class="btn ghost">Logi välja</button></div>
+  </header>
+  <nav class="tabs" id="tabs"><button data-tab="overview" class="on">Ülevaade</button><button data-tab="tx">Tehingud</button><button data-tab="debts">Võlad</button></nav>
+
+  <main class="wrap">
+    <div id="my-debt" class="notice" role="alert" hidden></div>
+    <div class="toolbar">
+      <label class="inline">Eesmärk
+        <select id="goal-select"></select>
+      </label>
+      <button id="new-goal" class="btn primary">+ Uus eesmärk</button>
+      <button id="del-goal" class="btn ghost">Kustuta eesmärk</button>
+    </div>
+
+    <div id="empty" class="card" hidden>
+      <h2>Alusta oma esimese eesmärgiga</h2>
+      <p class="muted">Sisesta, milleks sa raha kogud, ja kui palju seda vaja on.</p>
+    </div>
+
+    <div id="dash" hidden>
+      <div class="quick"><button class="btn primary" data-q="deposit">＋ Maksa sisse</button><button class="btn dark" data-q="withdrawal">− Võta välja</button><button class="btn blue" id="q-loan">Anna laenuks</button></div>
+      <section class="card hero" data-tab="overview">
+        <div class="hero-top">
+          <div><h2 id="g-title"></h2><p class="muted" id="g-deadline"></p></div>
+          <div class="big"><span id="g-pct">0</span>%</div>
+        </div>
+        <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><div id="g-bar"></div></div>
+        <div class="grid3">
+          <div><span class="label">Kogutud</span><strong id="g-saved"></strong></div>
+          <div><span class="label">Veel vaja</span><strong id="g-missing"></strong></div>
+          <div><span class="label">Sihtsumma</span><strong id="g-target"></strong></div>
+        </div>
+        <p class="muted small">Jäänud <span id="g-left-pct"></span>% eesmärgist.</p>
+      </section>
+
+      <section class="grid4" data-tab="overview">
+        <div class="card stat"><span class="label">Kokku säästetud</span><strong id="s-total"></strong></div>
+        <div class="card stat"><span class="label">Käesolev kuu</span><strong id="s-month"></strong></div>
+        <div class="card stat"><span class="label">Keskmine nädalas</span><strong id="s-week"></strong></div>
+        <div class="card stat"><span class="label">Keskmine kuus</span><strong id="s-avg"></strong></div>
+      </section>
+
+      <section class="grid3 ov" data-tab="overview">
+        <div class="card stat"><span class="label">Lainatud (tagasi saamata)</span><strong id="o-lent"></strong></div>
+        <div class="card stat"><span class="label">Kogutud + lainatud kokku</span><strong id="o-worth"></strong></div>
+        <div class="card stat"><span class="label">Päevi tähtajani</span><strong id="o-days"></strong></div>
+      </section>
+      <section class="grid2" data-tab="overview">
+        <div class="card"><h2>Viimased tehingud</h2><ul id="recent" class="list"></ul></div>
+        <div class="card"><h2>Kategooriad</h2><div id="cats"></div></div>
+      </section>
+      <section class="card" data-tab="overview">
+        <h2>Prognoos</h2>
+        <p id="forecast-text" class="forecast"></p>
+        <label class="inline">Plaanitav igakuine sääst (€)
+          <input id="plan" type="number" min="0" step="10" placeholder="nt 150">
+        </label>
+        <div id="chart" class="chart" role="img" aria-label="Säästude prognoosigraafik"></div>
+        <div class="legend"><i class="dot a"></i>Tegelik <i class="dot b"></i>Prognoos <i class="dot c"></i>Sihtsumma</div>
+      </section>
+
+      <section class="card" data-tab="tx">
+        <div class="row-head">
+          <h2>Tehingud</h2>
+          <div class="btns"><button id="export" class="btn ghost">Ekspordi CSV</button><button id="new-tx" class="btn primary">+ Lisa tehing</button></div>
+        </div>
+        <div class="filters">
+          <input id="f-search" type="search" placeholder="Otsi märkusest või kategooriast">
+          <select id="f-type"><option value="">Kõik tüübid</option><option value="deposit">Sissemaksed</option><option value="withdrawal">Väljamaksed</option></select>
+          <input id="f-from" type="date" aria-label="Alates"><input id="f-to" type="date" aria-label="Kuni">
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Kuupäev</th><th>Kategooria</th><th>Märkus</th><th class="num">Summa</th><th></th></tr></thead>
+            <tbody id="tx-body"></tbody>
+          </table>
+          <p id="tx-empty" class="muted center" hidden>Tehinguid ei leitud.</p>
+        </div>
+      </section>
+
+      <section class="card" data-tab="debts">
+        <div class="row-head"><h2>Võlad</h2><button id="new-debt" class="btn primary">+ Anna laenuks</button></div>
+        <div id="people" class="people"></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Kuupäev</th><th>Võlgnik</th><th>Märkus</th><th class="num">Laenatud</th><th class="num">Tagasi</th><th class="num">Võlg</th><th></th></tr></thead>
+            <tbody id="debt-body"></tbody>
+          </table>
+          <p id="debt-empty" class="muted center" hidden>Võlgu pole.</p>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<dialog id="goal-modal">
+  <form id="goal-form" method="dialog" class="modal">
+    <h2>Uus eesmärk</h2>
+    <label>Milleks kogud?<input id="gf-title" required maxlength="80" placeholder="nt Puhkus, auto, sügavkülm"></label>
+    <label>Sihtsumma (€)<input id="gf-target" type="number" min="1" step="0.01" required></label>
+    <label>Tähtaeg (valikuline)<input id="gf-deadline" type="date"></label>
+    <div class="actions"><button type="button" class="btn ghost" data-close>Tühista</button><button class="btn primary" value="ok">Salvesta eesmärk</button></div>
+  </form>
+</dialog>
+
+<dialog id="tx-modal">
+  <form id="tx-form" method="dialog" class="modal">
+    <h2>Lisa tehing</h2>
+    <label>Tüüp<select id="tf-type"><option value="deposit">Sissemakse</option><option value="withdrawal">Väljamakse</option></select></label>
+    <label>Summa (€)<input id="tf-amount" type="number" min="0.01" step="0.01" required></label>
+    <label>Kuupäev<input id="tf-date" type="date" required></label>
+    <label>Kategooria<select id="tf-cat"><option>Palk</option><option>Boonus</option><option>Kingitus</option><option>Korrigeerimine</option><option>Muu</option></select></label>
+    <label>Märkus<input id="tf-note" maxlength="200"></label>
+    <div class="actions"><button type="button" class="btn ghost" data-close>Tühista</button><button class="btn primary" value="ok">Salvesta tehing</button></div>
+  </form>
+</dialog>
+
+<dialog id="debt-modal">
+  <form id="debt-form" method="dialog" class="modal">
+    <h2>Anna laenuks</h2>
+    <label>Kellele?<input id="df-name" required maxlength="60" placeholder="nt Ema"></label>
+    <label>Tema e-post (valikuline, siis näeb ta võlga oma kontol)<input id="df-email" type="email"></label>
+    <label>Summa (€)<input id="df-amount" type="number" min="0.01" step="0.01" required></label>
+    <label>Märkus<input id="df-note" maxlength="200"></label>
+    <p class="muted small">Summa lahutatakse eesmärgi kogutud summast ja jääb võlaks, kuni see tagasi makstakse.</p>
+    <div class="actions"><button type="button" class="btn ghost" data-close>Tühista</button><button class="btn primary" value="ok">Salvesta võlg</button></div>
+  </form>
+</dialog>
+
+<div id="toast" role="status" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
