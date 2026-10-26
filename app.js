@@ -410,3 +410,4 @@ document.addEventListener('click', e => {
 
 /* ---------- Käivitus ---------- */
 api.session().then(u => u && start(u));
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
