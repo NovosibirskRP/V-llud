@@ -4,6 +4,9 @@
 const CONFIG = { SUPABASE_URL: 'https://dfbvvrjpmjefzjwsnncm.supabase.co', SUPABASE_ANON_KEY: 'sb_publishable_X1tXNBa0ykRs0SsmgYbdoA_TXOD6561' };
 const ADMIN_EMAIL = 'admin@seb-dashboard.local'; // kasutajanimi "Admin" teisendatakse sellele e-postile
 
+const DOMAIN = '@seb-dashboard.local'; // kasutajanimest tehakse sisemine e-post, päris e-posti pole vaja
+const toEmail = u => { u = u.trim().toLowerCase(); return u.includes('@') ? u : u + DOMAIN; };
+const shortName = e => (e || '').endsWith(DOMAIN) ? e.slice(0, -DOMAIN.length) : (e || '');
 const sb = (CONFIG.SUPABASE_URL && window.supabase) ? window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY) : null;
 const $ = id => document.getElementById(id);
 const eur = n => new Intl.NumberFormat('et-EE', { style: 'currency', currency: 'EUR' }).format(n || 0);
@@ -19,16 +22,16 @@ const demo = { load: () => Object.assign({ debts: [] }, JSON.parse(localStorage.
 const api = {
   async login(u, p) {
     if (sb) {
-      const email = u.trim().toLowerCase() === 'admin' ? ADMIN_EMAIL : u.trim();
+      const email = toEmail(u);
       const { data, error } = await sb.auth.signInWithPassword({ email, password: p });
       if (error) throw new Error('Vale kasutajanimi või parool.');
-      return { id: data.user.id, name: u.trim(), email };
+      return { id: data.user.id, name: shortName(email), email };
     }
     if (u.trim() === 'Admin' && p === 'SEB_Admin') { sessionStorage.setItem('seb_user', 'Admin'); return { id: 'demo-admin', name: 'Admin', email: '' }; }
     throw new Error('Vale kasutajanimi või parool.');
   },
   async session() {
-    if (sb) { const { data } = await sb.auth.getSession(); const u = data.session?.user; return u ? { id: u.id, name: u.email === ADMIN_EMAIL ? 'Admin' : u.email, email: u.email } : null; }
+    if (sb) { const { data } = await sb.auth.getSession(); const u = data.session?.user; return u ? { id: u.id, name: shortName(u.email), email: u.email } : null; }
     return sessionStorage.getItem('seb_user') ? { id: 'demo-admin', name: 'Admin', email: '' } : null;
   },
   async logout() { if (sb) await sb.auth.signOut(); sessionStorage.removeItem('seb_user'); },
@@ -59,15 +62,15 @@ const api = {
 };
 
 Object.assign(api, {
-  async signup(email, p, p2) {
+  async signup(username, p, p2) {
     if (!sb) throw new Error('Registreerimine vajab Supabase\'i.');
-    if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error('Sisesta korrektne e-posti aadress (nt nimi@gmail.com).');
+    const name = username.trim().toLowerCase();
+    if (!/^[a-z0-9._-]{3,30}$/.test(name)) throw new Error('Kasutajanimi: 3–30 märki (a-z, 0-9, punkt, kriips).');
     if (p.length < 8) throw new Error('Parool peab olema vähemalt 8 märki.');
     if (p !== p2) throw new Error('Paroolid ei klapi.');
-    const { data, error } = await sb.auth.signUp({ email, password: p });
+    const { error } = await sb.rpc('register_user', { p_username: name, p_password: p });
     if (error) throw new Error(error.message);
-    if (!data.session) throw new Error('Konto loodud. Kinnita e-post lingiga, mis sulle saadeti, ja logi siis sisse.');
-    return { id: data.user.id, name: email, email };
+    return api.login(name, p);
   },
   async debts(goalId) {
     if (sb) { const { data, error } = await sb.from('debts').select('*').eq('goal_id', goalId).order('created_at', { ascending: false }); if (error) throw error; return data; }
@@ -87,9 +90,29 @@ Object.assign(api, {
   async repayDebt(debt, amt) {
     await api.addTx({ goal_id: debt.goal_id, amount: amt, type: 'deposit', tx_date: today(), category: 'Võla tagasimakse', note: 'Tagasimakse: ' + debt.debtor_name });
     const r = Number(debt.repaid_amount) + amt;
+    if (sb) { const { error: pe } = await sb.from('debt_payments').insert({ debt_id: debt.id, user_id: state.user.id, amount: amt }); if (pe) throw pe; }
     if (sb) { const { error } = await sb.from('debts').update({ repaid_amount: r }).eq('id', debt.id); if (error) throw error; return; }
     const d = demo.load(); d.debts.find(z => z.id === debt.id).repaid_amount = r; demo.save(d);
   }
+});
+
+Object.assign(api, {
+  async payments(debtId) { if (!sb) return []; const { data, error } = await sb.from('debt_payments').select('*').eq('debt_id', debtId).order('paid_at', { ascending: false }); if (error) throw error; return data; },
+  async remind(debt, message) {
+    if (!sb) throw new Error('Meeldetuletus vajab Supabase\'i.');
+    if (!debt.debtor_email) throw new Error('Lisa laenule võlgniku kasutajanimi, siis saab teda meelde tuletada.');
+    const { error } = await sb.from('reminders').insert({ debt_id: debt.id, from_user: state.user.id, to_email: debt.debtor_email, message }); if (error) throw error;
+  },
+  async myReminders() {
+    if (!sb) return [];
+    const { data } = await sb.from('reminders').select('*').order('created_at', { ascending: false }).limit(30);
+    return (data || []).filter(r => r.to_email.toLowerCase() === (state.user.email || '').toLowerCase());
+  },
+  async markRead() { if (sb) await sb.rpc('mark_reminders_read'); },
+  async isAdmin() { if (!sb) return false; const { data } = await sb.from('profiles').select('role').eq('id', state.user.id).maybeSingle(); return data?.role === 'admin'; },
+  async adminUsers() { const { data, error } = await sb.rpc('admin_users'); if (error) throw error; return data; },
+  async setRole(id, role) { const { error } = await sb.rpc('set_role', { uid: id, new_role: role }); if (error) throw error; },
+  async setPassword(id, pw) { const { error } = await sb.rpc('admin_set_password', { uid: id, pw }); if (error) throw error; }
 });
 
 /* ---------- Olek ---------- */
@@ -101,7 +124,8 @@ async function guard(fn) { try { await fn(); } catch (e) { console.error(e); toa
 /* ---------- Autentimine ---------- */
 $('mode-note').textContent = sb ? '' : 'Demo-režiim: Supabase pole seadistatud, andmed jäävad sinu brauserisse.';
 let signup = false;
-$('toggle-signup').hidden = !sb; $('pw-btn').hidden = !sb;
+$('toggle-signup').hidden = true; $('pw-btn').hidden = !sb;
+if (sb) sb.rpc('signup_allowed').then(({ data }) => { $('toggle-signup').hidden = !data; });
 $('toggle-signup').onclick = () => {
   signup = !signup;
   $('pass2-wrap').hidden = !signup;
@@ -123,7 +147,7 @@ async function start(user) {
   state.user = user;
   $('user-name').textContent = user.name;
   $('login-view').hidden = true; $('app-view').hidden = false;
-  await guard(loadGoals); guard(showMyDebt);
+  await guard(loadGoals); guard(showMyDebt); guard(initAdmin);
 }
 
 /* ---------- Eesmärgid ---------- */
@@ -252,7 +276,7 @@ function renderTable() {
 function showTab(t) {
   state.tab = t;
   $('empty').style.display = t === 'overview' ? '' : 'none';
-  document.querySelector('.toolbar').style.display = t === 'mine' ? 'none' : '';
+  document.querySelector('.toolbar').style.display = (t === 'mine' || t === 'admin') ? 'none' : '';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   document.querySelectorAll('[data-tab]:not(button)').forEach(x => x.hidden = x.dataset.tab !== t);
 }
@@ -273,10 +297,10 @@ $('pw-form').addEventListener('submit', e => {
   if (a.length < 8) return toast('Parool on liiga lühike');
   guard(async () => { const { error } = await sb.auth.updateUser({ password: a }); if (error) throw error; toast('Parool muudetud'); });
 });
-$('my-debt').onclick = () => showTab('mine');
+$('my-debt').onclick = () => { showTab('mine'); api.markRead(); };
 function renderMine(list) {
   const left = d => Number(d.amount) - Number(d.repaid_amount);
-  $('mine-body').innerHTML = list.map(d => `<tr><td>${new Date(d.created_at).toLocaleDateString('et-EE')}</td><td>${esc(d.creditor)}</td><td>${esc(d.note)}</td><td class="num">${eur(d.amount)}</td><td class="num pos">${eur(d.repaid_amount)}</td><td class="num ${left(d) > 0.001 ? 'neg' : ''}">${left(d) > 0.001 ? eur(left(d)) : 'Tasutud'}</td></tr>`).join('');
+  $('mine-body').innerHTML = list.map(d => `<tr><td>${new Date(d.created_at).toLocaleDateString('et-EE')}</td><td>${esc(d.creditor)}</td><td>${esc(d.note)}</td><td>${dueCell(d)}</td><td class="num">${eur(d.amount)}</td><td class="num pos">${eur(d.repaid_amount)}</td><td class="num ${left(d) > 0.001 ? 'neg' : ''}">${left(d) > 0.001 ? eur(left(d)) : 'Tasutud'}</td></tr>`).join('');
   $('mine-empty').hidden = list.length > 0;
 }
 
@@ -289,7 +313,7 @@ $('debt-form').addEventListener('submit', e => {
   if (!name || !(amount > 0)) return;
   if (amount > stats().total) return toast('Kogutud summa ei kata seda laenu.');
   guard(async () => {
-    await api.addDebt({ goal_id: state.goal.id, debtor_name: name, debtor_email: $('df-email').value.trim() || null, amount, note: $('df-note').value.trim() });
+    await api.addDebt({ goal_id: state.goal.id, debtor_name: name, debtor_email: $('df-email').value.trim() ? toEmail($('df-email').value) : null, due_date: $('df-due').value || null, amount, note: $('df-note').value.trim() });
     await selectGoal(state.goal.id); toast(`${name} võlgneb nüüd ${eur(amount)}`);
   });
 });
@@ -302,7 +326,7 @@ document.addEventListener('click', e => {
 });
 async function showMyDebt() {
   const mine = await api.myDebts(), sum = mine.reduce((a, d) => a + Number(d.amount) - Number(d.repaid_amount), 0);
-  const el = $('my-debt'); el.hidden = !(sum > 0); renderMine(mine);
+  const el = $('my-debt'); el.hidden = !(sum > 0); renderMine(mine); await showReminders();
   if (sum > 0) el.textContent = `Sul on tasumata võlg ${eur(sum)} (${mine.length} laen${mine.length > 1 ? 'i' : ''}).`;
 }
 
@@ -317,9 +341,72 @@ function renderOverview(s) {
   $('cats').innerHTML = Object.entries(c).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div class="cat"><span>${esc(k)}</span><i style="width:${v / mx * 100}%"></i><b>${eur(v)}</b></div>`).join('') || '<p class="muted">Andmeid pole.</p>';
   const by = {}; open.forEach(d => by[d.debtor_name] = (by[d.debtor_name] || 0) + left(d));
   $('people').innerHTML = Object.entries(by).map(([n, v]) => `<div class="person"><span class="avatar">${esc(n[0].toUpperCase())}</span><div><strong>${esc(n)}</strong><span class="label">Konto: võlgu ${eur(v)}</span></div></div>`).join('');
-  $('debt-body').innerHTML = state.debts.map(d => `<tr><td>${new Date(d.created_at).toLocaleDateString('et-EE')}</td><td>${esc(d.debtor_name)}</td><td>${esc(d.note)}</td><td class="num">${eur(d.amount)}</td><td class="num pos">${eur(d.repaid_amount)}</td><td class="num ${left(d) > 0.001 ? 'neg' : ''}">${left(d) > 0.001 ? eur(left(d)) : 'Tasutud'}</td><td>${left(d) > 0.001 ? `<button class="btn ghost small" data-repay="${esc(d.id)}">Tagasimakse</button>` : ''}</td></tr>`).join('');
+  $('debt-body').innerHTML = state.debts.map(d => `<tr><td>${new Date(d.created_at).toLocaleDateString('et-EE')}</td><td>${esc(d.debtor_name)}</td><td>${esc(d.note)}</td><td>${dueCell(d)}</td><td class="num">${eur(d.amount)}</td><td class="num pos">${eur(d.repaid_amount)}</td><td class="num ${left(d) > 0.001 ? 'neg' : ''}">${left(d) > 0.001 ? eur(left(d)) : 'Tasutud'}</td><td class="acts">${actions(d)}</td></tr>`).join('');
   $('debt-empty').hidden = state.debts.length > 0;
 }
+
+/* ---------- Tähtajad, ajalugu, meeldetuletused ---------- */
+const isOpen = d => Number(d.amount) - Number(d.repaid_amount) > 0.001;
+const overdue = d => d.due_date && isOpen(d) && d.due_date < today();
+const dueCell = d => `${d.due_date ? new Date(d.due_date).toLocaleDateString('et-EE') : '–'}${overdue(d) ? ' <span class="badge">Üle tähtaja</span>' : ''}`;
+const actions = d => `${isOpen(d) ? `<button class="btn ghost small" data-repay="${esc(d.id)}">Tagasimakse</button> <button class="btn ghost small" data-remind="${esc(d.id)}">Meeldetuletus</button> ` : ''}<button class="btn ghost small" data-hist="${esc(d.id)}">Ajalugu</button>`;
+
+document.addEventListener('click', e => {
+  const h = e.target.closest('[data-hist]'), r = e.target.closest('[data-remind]');
+  if (h) guard(async () => {
+    const p = await api.payments(h.dataset.hist);
+    $('hist-list').innerHTML = p.map(x => `<li><span>${new Date(x.paid_at).toLocaleDateString('et-EE')}</span><b class="pos">+${eur(x.amount)}</b></li>`).join('') || '<li class="muted">Makseid pole veel.</li>';
+    $('hist-modal').showModal();
+  });
+  if (r) {
+    const d = state.debts.find(x => x.id === r.dataset.remind), left = Number(d.amount) - Number(d.repaid_amount);
+    const msg = `Tuletan meelde, et võlgned mulle ${eur(left)}${d.due_date ? ' (tähtaeg ' + new Date(d.due_date).toLocaleDateString('et-EE') + ')' : ''}.${d.note ? ' Märkus: ' + d.note : ''}`;
+    guard(async () => {
+      await api.remind(d, msg);
+      $('rem-text').textContent = 'Meeldetuletus on nüüd võlgniku kontol nähtav (vahekaart Minu võlad).';
+      $('rem-modal').showModal();
+    });
+  }
+});
+async function showReminders() {
+  const list = await api.myReminders();
+  $('mine-rem').innerHTML = list.map(r => `<div class="rem ${r.read_at ? '' : 'new'}"><b>${new Date(r.created_at).toLocaleDateString('et-EE')}</b> ${esc(r.message)}</div>`).join('');
+  const unread = list.filter(r => !r.read_at).length, el = $('my-debt');
+  if (unread) { el.textContent = (el.hidden ? '' : el.textContent + ' ') + `Uusi meeldetuletusi: ${unread}.`; el.hidden = false; }
+}
+
+/* ---------- Admini paneel ---------- */
+async function initAdmin() { const ok = await api.isAdmin(); $('tab-admin').hidden = !ok; if (ok) await loadAdmin(); }
+async function loadAdmin() {
+  const { data: sa } = await sb.rpc('signup_allowed'); $('signup-toggle').checked = !!sa;
+  const u = await api.adminUsers(), f = v => v ? new Date(v).toLocaleDateString('et-EE') : '–';
+  $('admin-body').innerHTML = u.map(x => `<tr><td>${esc(shortName(x.email))}</td><td>${f(x.created_at)}</td><td>${f(x.last_sign_in_at)}</td>
+    <td><select data-role="${esc(x.id)}"><option value="user"${x.role === 'user' ? ' selected' : ''}>user</option><option value="admin"${x.role === 'admin' ? ' selected' : ''}>admin</option></select></td>
+    <td><button class="btn ghost small" data-setpw="${esc(x.id)}" data-email="${esc(x.email)}">Lähtesta parool</button></td></tr>`).join('');
+}
+$('newuser-form').addEventListener('submit', e => {
+  e.preventDefault();
+  guard(async () => {
+    const { error } = await sb.rpc('admin_create_user', { p_username: $('nu-name').value.trim().toLowerCase(), p_password: $('nu-pass').value });
+    if (error) throw error;
+    e.target.reset(); toast('Kasutaja loodud'); await loadAdmin();
+  });
+});
+$('signup-toggle').addEventListener('change', e => guard(async () => {
+  const { error } = await sb.rpc('admin_set_signup', { allow: e.target.checked }); if (error) throw error;
+  toast(e.target.checked ? 'Registreerimine lubatud' : 'Registreerimine suletud');
+}));
+document.addEventListener('change', e => {
+  const s = e.target.closest('[data-role]'); if (!s) return;
+  guard(async () => { await api.setRole(s.dataset.role, s.value); toast('Roll muudetud'); await loadAdmin(); });
+});
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-setpw]'); if (!b) return;
+  const pw = prompt(`Uus parool kasutajale ${shortName(b.dataset.email)} (vähemalt 8 märki):`);
+  if (!pw) return;
+  if (pw.length < 8) return toast('Parool on liiga lühike');
+  guard(async () => { await api.setPassword(b.dataset.setpw, pw); toast('Parool muudetud'); });
+});
 
 /* ---------- Käivitus ---------- */
 api.session().then(u => u && start(u));
