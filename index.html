@@ -12,11 +12,13 @@
 <section id="login-view" class="login">
   <form id="login-form" class="login-card" autocomplete="on">
     <div class="logo">Säästud</div>
-    <h1>Logi sisse</h1>
+    <h1 id="login-title">Logi sisse</h1>
     <label>Kasutaja või e-post<input id="login-user" required autocomplete="username"></label>
     <label>Parool<input id="login-pass" type="password" required autocomplete="current-password"></label>
+    <label id="pass2-wrap" hidden>Korda parooli<input id="login-pass2" type="password" autocomplete="new-password"></label>
     <p id="login-error" class="error" role="alert" hidden></p>
-    <button class="btn primary" type="submit">Logi sisse</button>
+    <button id="login-submit" class="btn primary" type="submit">Logi sisse</button>
+    <button id="toggle-signup" type="button" class="btn ghost linkbtn">Pole kontot? Registreeru</button>
     <p id="mode-note" class="muted small"></p>
   </form>
 </section>
@@ -24,12 +26,23 @@
 <div id="app-view" hidden>
   <header class="topbar">
     <div class="logo">Säästud</div>
-    <div class="user"><span id="user-name"></span><button id="logout" class="btn ghost">Logi välja</button></div>
+    <div class="user"><span id="user-name"></span><button id="pw-btn" class="btn ghost">Muuda parooli</button><button id="logout" class="btn ghost">Logi välja</button></div>
   </header>
-  <nav class="tabs" id="tabs"><button data-tab="overview" class="on">Ülevaade</button><button data-tab="tx">Tehingud</button><button data-tab="debts">Võlad</button></nav>
+  <nav class="tabs" id="tabs"><button data-tab="overview" class="on">Ülevaade</button><button data-tab="tx">Tehingud</button><button data-tab="debts">Võlad</button><button data-tab="mine">Minu võlad</button></nav>
 
   <main class="wrap">
     <div id="my-debt" class="notice" role="alert" hidden></div>
+    <section class="card" id="mine" data-tab="mine" hidden>
+      <h2>Minu võlad</h2>
+      <p class="muted small">Laenud, mida teised on sulle andnud (seotud sinu e-posti aadressiga).</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Kuupäev</th><th>Kellele võlgned</th><th>Märkus</th><th class="num">Laenatud</th><th class="num">Tasutud</th><th class="num">Võlg</th></tr></thead>
+          <tbody id="mine-body"></tbody>
+        </table>
+        <p id="mine-empty" class="muted center" hidden>Sul pole võlgu.</p>
+      </div>
+    </section>
     <div class="toolbar">
       <label class="inline">Eesmärk
         <select id="goal-select"></select>
@@ -150,6 +163,15 @@
     <label>Märkus<input id="df-note" maxlength="200"></label>
     <p class="muted small">Summa lahutatakse eesmärgi kogutud summast ja jääb võlaks, kuni see tagasi makstakse.</p>
     <div class="actions"><button type="button" class="btn ghost" data-close>Tühista</button><button class="btn primary" value="ok">Salvesta võlg</button></div>
+  </form>
+</dialog>
+
+<dialog id="pw-modal">
+  <form id="pw-form" method="dialog" class="modal">
+    <h2>Muuda parooli</h2>
+    <label>Uus parool (vähemalt 8 märki)<input id="pw-new" type="password" minlength="8" required autocomplete="new-password"></label>
+    <label>Korda parooli<input id="pw-new2" type="password" minlength="8" required autocomplete="new-password"></label>
+    <div class="actions"><button type="button" class="btn ghost" data-close>Tühista</button><button class="btn primary" value="ok">Salvesta parool</button></div>
   </form>
 </dialog>
 
