@@ -73,3 +73,5 @@ dialog::backdrop{background:rgba(28,32,36,.6)}
 .cat{display:grid;grid-template-columns:110px 1fr auto;gap:.6rem;align-items:center;font-size:.9rem;margin-bottom:.5rem}
 .cat i{height:8px;background:linear-gradient(90deg,var(--green),var(--blue));border-radius:4px}
 @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+
+.linkbtn{margin-top:.5rem;color:var(--muted)}.notice{cursor:pointer}
