@@ -1,9 +1,7 @@
-const SUPABASE_URL = "https://dfbvvrjpmjefzjwsnncm.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_X1tXNBa0ykRs0SsmgYbdoA_TXOD6561";
 'use strict';
 /* ---------- Seadistus ----------
    Täida Supabase andmed. Kui jäävad tühjaks, töötab rakendus DEMO-režiimis (andmed brauseris, ainult testimiseks). */
-const CONFIG = { SUPABASE_URL: '', SUPABASE_ANON_KEY: '' };
+const CONFIG = { SUPABASE_URL: 'https://dfbvvrjpmjefzjwsnncm.supabase.co', SUPABASE_ANON_KEY: 'sb_publishable_X1tXNBa0ykRs0SsmgYbdoA_TXOD6561' };
 const ADMIN_EMAIL = 'admin@seb-dashboard.local'; // kasutajanimi "Admin" teisendatakse sellele e-postile
 
 const sb = (CONFIG.SUPABASE_URL && window.supabase) ? window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY) : null;
@@ -61,14 +59,25 @@ const api = {
 };
 
 Object.assign(api, {
+  async signup(email, p, p2) {
+    if (!sb) throw new Error('Registreerimine vajab Supabase\'i.');
+    if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error('Sisesta korrektne e-posti aadress (nt nimi@gmail.com).');
+    if (p.length < 8) throw new Error('Parool peab olema vähemalt 8 märki.');
+    if (p !== p2) throw new Error('Paroolid ei klapi.');
+    const { data, error } = await sb.auth.signUp({ email, password: p });
+    if (error) throw new Error(error.message);
+    if (!data.session) throw new Error('Konto loodud. Kinnita e-post lingiga, mis sulle saadeti, ja logi siis sisse.');
+    return { id: data.user.id, name: email, email };
+  },
   async debts(goalId) {
     if (sb) { const { data, error } = await sb.from('debts').select('*').eq('goal_id', goalId).order('created_at', { ascending: false }); if (error) throw error; return data; }
     return demo.load().debts.filter(x => x.goal_id === goalId).reverse();
   },
   async myDebts() { // võlad, mis on antud MULLE (võlgniku e-post = minu e-post)
-    if (!sb || !state.user.email) return [];
-    const { data } = await sb.from('debts').select('*').ilike('debtor_email', state.user.email).neq('user_id', state.user.id);
-    return (data || []).filter(d => Number(d.amount) > Number(d.repaid_amount));
+    if (!sb) return [];
+    const { data, error } = await sb.rpc('my_debts');
+    if (error) { console.error(error); return []; }
+    return data || [];
   },
   async addDebt(x) {
     await api.addTx({ goal_id: x.goal_id, amount: x.amount, type: 'withdrawal', tx_date: today(), category: 'Laen', note: 'Laen: ' + x.debtor_name });
@@ -91,10 +100,20 @@ async function guard(fn) { try { await fn(); } catch (e) { console.error(e); toa
 
 /* ---------- Autentimine ---------- */
 $('mode-note').textContent = sb ? '' : 'Demo-režiim: Supabase pole seadistatud, andmed jäävad sinu brauserisse.';
+let signup = false;
+$('toggle-signup').hidden = !sb; $('pw-btn').hidden = !sb;
+$('toggle-signup').onclick = () => {
+  signup = !signup;
+  $('pass2-wrap').hidden = !signup;
+  $('login-pass2').required = signup;
+  $('login-title').textContent = $('login-submit').textContent = signup ? 'Loo konto' : 'Logi sisse';
+  $('toggle-signup').textContent = signup ? 'Mul on konto, logi sisse' : 'Pole kontot? Registreeru';
+  $('login-pass').autocomplete = signup ? 'new-password' : 'current-password';
+};
 $('login-form').addEventListener('submit', e => {
   e.preventDefault();
   const err = $('login-error'); err.hidden = true;
-  api.login($('login-user').value, $('login-pass').value)
+  (signup ? api.signup($('login-user').value.trim(), $('login-pass').value, $('login-pass2').value) : api.login($('login-user').value, $('login-pass').value))
     .then(u => { $('login-pass').value = ''; return start(u); })
     .catch(x => { err.textContent = x.message; err.hidden = false; });
 });
@@ -232,6 +251,8 @@ function renderTable() {
 /* ---------- Navigatsioon, kiirnupud ---------- */
 function showTab(t) {
   state.tab = t;
+  $('empty').style.display = t === 'overview' ? '' : 'none';
+  document.querySelector('.toolbar').style.display = t === 'mine' ? 'none' : '';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   document.querySelectorAll('[data-tab]:not(button)').forEach(x => x.hidden = x.dataset.tab !== t);
 }
@@ -242,6 +263,22 @@ $('export').onclick = () => {
   const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); a.download = 'tehingud.csv'; a.click();
 };
+
+/* ---------- Parool ja "Minu võlad" ---------- */
+$('pw-btn').onclick = () => { $('pw-form').reset(); $('pw-modal').showModal(); };
+$('pw-form').addEventListener('submit', e => {
+  if (e.submitter?.value !== 'ok') return;
+  const a = $('pw-new').value;
+  if (a !== $('pw-new2').value) return toast('Paroolid ei klapi');
+  if (a.length < 8) return toast('Parool on liiga lühike');
+  guard(async () => { const { error } = await sb.auth.updateUser({ password: a }); if (error) throw error; toast('Parool muudetud'); });
+});
+$('my-debt').onclick = () => showTab('mine');
+function renderMine(list) {
+  const left = d => Number(d.amount) - Number(d.repaid_amount);
+  $('mine-body').innerHTML = list.map(d => `<tr><td>${new Date(d.created_at).toLocaleDateString('et-EE')}</td><td>${esc(d.creditor)}</td><td>${esc(d.note)}</td><td class="num">${eur(d.amount)}</td><td class="num pos">${eur(d.repaid_amount)}</td><td class="num ${left(d) > 0.001 ? 'neg' : ''}">${left(d) > 0.001 ? eur(left(d)) : 'Tasutud'}</td></tr>`).join('');
+  $('mine-empty').hidden = list.length > 0;
+}
 
 /* ---------- Võlad ---------- */
 $('new-debt').onclick = () => { $('debt-form').reset(); $('debt-modal').showModal(); };
@@ -265,7 +302,7 @@ document.addEventListener('click', e => {
 });
 async function showMyDebt() {
   const mine = await api.myDebts(), sum = mine.reduce((a, d) => a + Number(d.amount) - Number(d.repaid_amount), 0);
-  const el = $('my-debt'); el.hidden = !(sum > 0);
+  const el = $('my-debt'); el.hidden = !(sum > 0); renderMine(mine);
   if (sum > 0) el.textContent = `Sul on tasumata võlg ${eur(sum)} (${mine.length} laen${mine.length > 1 ? 'i' : ''}).`;
 }
 
